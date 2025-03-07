@@ -1,0 +1,60 @@
+from transformers import pipeline, AutoTokenizer, AutoModel
+from sklearn.metrics.pairwise import cosine_similarity
+import numpy as np
+import torch
+
+def translate_and_embed(text, source_lang="fr", target_lang="en"):
+    """Translates and embeds, handling multilingual model names."""
+    try:
+        # 1. Translation (Corrected pipeline naming)
+        model_name = f"Helsinki-NLP/opus-mt-{source_lang}-{target_lang}"  # Correct format
+        try:
+            translator = pipeline("translation", model=model_name)  # Use "translation" task
+        except Exception as e: # Catch if model is not available
+            print(f"Translation model not found for {source_lang}-{target_lang}: {e}")
+            return None, None
+        translated_text = translator(text)[0]['translation_text']
+
+        # 2. Embedding
+        model_name_embed = "all-mpnet-base-v2"  # Or another good sentence transformer model
+        tokenizer = AutoTokenizer.from_pretrained(model_name_embed)
+        model = AutoModel.from_pretrained(model_name_embed)
+
+        inputs = tokenizer(translated_text, padding=True, truncation=True, return_tensors='pt')
+        with torch.no_grad():
+            outputs = model(**inputs)
+
+        embeddings = outputs.last_hidden_state.mean(dim=1)
+        embedding = embeddings.numpy()
+
+        return translated_text, embedding
+
+    except Exception as e:
+        print(f"An error occurred: {e}")
+        return None, None
+
+# ... (rest of the code: compare_embeddings function, example usage)
+# ... (no changes needed in the compare_embeddings function or the way it's called)
+
+# Example Usage (Corrected):
+text_in_french = "Bonjour le monde!"
+text_in_spanish = "Hola Mundo!"
+text_in_english1 = "Hello, world!"
+text_in_english2 = "Greetings, earth!"
+
+translated_text_en1, embedding_en1 = translate_and_embed(text_in_french, "fr")
+translated_text_en2, embedding_en2 = translate_and_embed(text_in_spanish, "es")
+translated_text_en3, embedding_en3 = translate_and_embed(text_in_english1, "en") # No translation needed
+translated_text_en4, embedding_en4 = translate_and_embed(text_in_english2, "en") # No translation needed
+
+
+if all([embedding_en1, embedding_en2, embedding_en3, embedding_en4]):  # Check if all embeddings are generated
+    similarity1 = compare_embeddings(embedding_en1, embedding_en3)
+    similarity2 = compare_embeddings(embedding_en2, embedding_en4)
+    similarity3 = compare_embeddings(embedding_en3, embedding_en4)
+
+    print(f"Similarity (French-translated vs. English1): {similarity1}")
+    print(f"Similarity (Spanish-translated vs. English2): {similarity2}")
+    print(f"Similarity (English1 vs. English2): {similarity3}")
+else:
+    print("Embedding generation failed for one or more texts.")
