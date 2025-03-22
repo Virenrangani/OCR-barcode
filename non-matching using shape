@@ -1,0 +1,225 @@
+# import cv2
+# import numpy as np
+# import easyocr  # Alternative to pytesseract
+# from difflib import SequenceMatcher
+
+# def resize_and_load_image(image_path, scale=0.3):
+#     img = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
+#     if img is None:
+#         raise FileNotFoundError(f"Error: Could not read image at {image_path}")
+#     new_size = tuple(np.int32(np.array(img.shape[::-1]) * scale))
+#     return cv2.resize(img, new_size, interpolation=cv2.INTER_AREA)
+
+# def extract_fast_features(image):
+#     fast = cv2.FastFeatureDetector_create()
+#     orb = cv2.ORB_create()
+#     keypoints = fast.detect(image, None)
+#     return orb.compute(image, keypoints) if keypoints else ([], None)
+
+# def match_features(descriptors1, descriptors2):
+#     if descriptors1 is None or descriptors2 is None:
+#         return []
+#     matches = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True).match(descriptors1, descriptors2)
+#     return sorted(matches, key=lambda x: x.distance)
+
+# def calculate_non_matching_percentage(matches, total_keypoints):
+#     return 100.0 if total_keypoints == 0 else (1 - len(matches) / total_keypoints) * 100
+
+# def extract_text(image):
+#     reader = easyocr.Reader(['en'])  # Initialize EasyOCR
+#     result = reader.readtext(image)
+#     return " ".join([res[1] for res in result]).strip()
+
+# def calculate_text_difference(text1, text2):
+#     return SequenceMatcher(None, text1, text2).ratio() * 100
+
+# def highlight_non_matching_areas(img1, img2, keypoints1, keypoints2, matches, non_match_percent, text_match_percent):
+#     img_matches = cv2.drawMatches(img1, keypoints1, img2, keypoints2, matches, None, flags=cv2.DrawMatchesFlags_NOT_DRAW_SINGLE_POINTS)
+    
+#     for match in matches:
+#         pt1 = tuple(np.int32(keypoints1[match.queryIdx].pt))
+#         pt2 = tuple(np.int32(keypoints2[match.trainIdx].pt))
+#         cv2.rectangle(img_matches, pt1, (pt1[0] + 10, pt1[1] + 10), (0, 0, 255), 2)
+#         cv2.rectangle(img_matches, pt2, (pt2[0] + 10, pt2[1] + 10), (0, 0, 255), 2)
+    
+#     cv2.putText(img_matches, f"Non-Matching Area: {non_match_percent:.2f}%", (50, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+#     cv2.putText(img_matches, f"Text Match: {text_match_percent:.2f}%", (50, 100), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 2)
+    
+#     return img_matches
+
+# def main():
+#     try:
+#         template_img = resize_and_load_image('image2.jpg', scale=0.5)
+#         real_img = resize_and_load_image('image1.jpg', scale=0.3)
+#     except FileNotFoundError as e:
+#         print(e)
+#         return
+
+#     template_keypoints, template_descriptors = extract_fast_features(template_img)
+#     real_keypoints, real_descriptors = extract_fast_features(real_img)
+
+#     if not template_keypoints or not real_keypoints:
+#         print("Error: Could not extract features from one or both images.")
+#         return
+
+#     matches = match_features(template_descriptors, real_descriptors)
+
+#     if not matches:
+#         print("Not enough good matches found.")
+#         return
+    
+#     total_keypoints = min(len(template_keypoints), len(real_keypoints))
+#     non_match_percent = calculate_non_matching_percentage(matches, total_keypoints)
+#     print(f"Non-Matching Area: {non_match_percent:.2f}%")
+    
+#     # Extract and compare text using EasyOCR
+#     template_text = extract_text(template_img)
+#     real_text = extract_text(real_img)
+#     text_match_percent = calculate_text_difference(template_text, real_text)
+#     print(f"Text Match Percentage: {text_match_percent:.2f}%")
+
+#     result_img = highlight_non_matching_areas(template_img, real_img, template_keypoints, real_keypoints, matches, non_match_percent, text_match_percent)
+
+#     cv2.imwrite("fast_feature_matches.jpg", result_img)
+#     print("Feature matching image saved as fast_feature_matches.jpg")
+
+# if __name__ == "__main__":
+#     main()
+
+
+
+
+
+
+
+
+import cv2
+import numpy as np
+
+def detect_non_matching_areas_connected_components(image1_path, image2_path, output_image_path, cell_size=50, match_threshold=0.7):
+    """
+    Detects non-matching areas between two images using FAST and feature matching,
+    draws bounding boxes around *separate* non-matching regions using connected components.
+    Saves the result to an output image file.
+
+    Args:
+        image1_path: Path to the first image (reference image - e.g., template image).
+        image2_path: Path to the second image (e.g., actual image).
+        output_image_path: Path to save the output image with bounding boxes.
+        cell_size: Size of the grid cells to divide the image into.
+        match_threshold: Minimum ratio test threshold for good matches (adjust as needed).
+
+    Returns:
+        True if successful, False otherwise (e.g., image loading error).
+    """
+
+    print(f"Loading images: {image1_path}, {image2_path}")
+    img1 = cv2.imread(image1_path, cv2.IMREAD_GRAYSCALE)
+    img2 = cv2.imread(image2_path, cv2.IMREAD_GRAYSCALE)
+
+    if img1 is None or img2 is None:
+        print("Error: Could not load images. Please check image paths.")
+        return False
+
+    print(f"Image 1 shape: {img1.shape}, Image 2 shape: {img2.shape}")
+
+    # 1. Feature Detection (FAST)
+    fast = cv2.FastFeatureDetector_create()
+    kp1 = fast.detect(img1, None)
+    kp2 = fast.detect(img2, None)
+    print(f"Detected FAST keypoints - Image 1: {len(kp1)}, Image 2: {len(kp2)}")
+
+    # 2. Feature Description (ORB)
+    orb = cv2.ORB_create()
+    kp1, des1 = orb.compute(img1, kp1)
+    kp2, des2 = orb.compute(img2, kp2)
+
+    if des1 is None or des2 is None:
+        print("Warning: No descriptors computed. Check if enough keypoints were detected.")
+        cv2.imwrite(output_image_path, cv2.cvtColor(img1, cv2.COLOR_GRAY2BGR))
+        return True
+
+    print(f"Computed ORB descriptors - Image 1: {des1.shape if des1 is not None else None}, Image 2: {des2.shape if des2 is not None else None}")
+
+    # 3. Feature Matching (Brute-Force)
+    bf = cv2.BFMatcher_create(cv2.NORM_HAMMING, crossCheck=False)
+    matches = bf.knnMatch(des1, des2, k=2)
+    print(f"Initial matches found: {len(matches)}")
+
+    # 4. Ratio test
+    good_matches = []
+    for m, n in matches:
+        if m.distance < match_threshold * n.distance:
+            good_matches.append(m)
+    print(f"Good matches after ratio test: {len(good_matches)}")
+
+    # 5. Grid-based Non-Matching Area Identification
+    h, w = img1.shape
+    grid_h = h // cell_size
+    grid_w = w // cell_size
+    non_matching_cells = np.zeros((grid_h, grid_w), dtype=np.uint8)
+    non_matching_cells[:] = 1 # Initialize all as non-matching
+
+    if good_matches:
+        for match in good_matches:
+            idx1 = match.queryIdx
+            pt1 = kp1[idx1].pt
+            cell_row = int(pt1[1] // cell_size)
+            cell_col = int(pt1[0] // cell_size)
+            if 0 <= cell_row < grid_h and 0 <= cell_col < grid_w:
+                non_matching_cells[cell_row, cell_col] = 0 # Mark cell as matching
+
+    print("Non-matching cells grid:\n", non_matching_cells)
+
+    # 6. Connected Components Analysis and Bounding Boxes
+    image_with_boxes = cv2.cvtColor(img1, cv2.COLOR_GRAY2BGR)
+
+    # Convert non_matching_cells (0 and 1) to binary image (0 and 255) for connected components
+    binary_non_matching_cells = (non_matching_cells * 255).astype(np.uint8)
+
+    num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(binary_non_matching_cells, connectivity=8)
+
+    print(f"Connected components found: {num_labels - 1} (excluding background)") # num_labels includes background
+
+    # Iterate through connected components (start from 1 to skip background component 0)
+    for label in range(1, num_labels):
+        x = stats[label, cv2.CC_STAT_LEFT]
+        y = stats[label, cv2.CC_STAT_TOP]
+        w_region = stats[label, cv2.CC_STAT_WIDTH]
+        h_region = stats[label, cv2.CC_STAT_HEIGHT]
+        area = stats[label, cv2.CC_STAT_AREA]
+
+        # Filter out very small regions if needed (e.g., area > some_threshold)
+        if area > 10: # Example: Minimum area threshold - adjust as needed
+            x1 = x * cell_size
+            y1 = y * cell_size
+            x2 = (x + w_region) * cell_size
+            y2 = (y + h_region) * cell_size
+            cv2.rectangle(image_with_boxes, (x1, y1), (x2, y2), (0, 0, 255), 2)
+            print(f"Bounding box (component {label}): ({x1}, {y1}), ({x2}, {y2}), Area: {area}")
+
+
+    cv2.imwrite(output_image_path, image_with_boxes)
+    print(f"Output image saved to: {output_image_path}")
+    return True
+
+if __name__ == '__main__':
+    template_image_path = 'image1.jpg' # Replace with your template image path
+    actual_image_path = 'image3.jpg'   # Replace with your actual image path
+    output_path = 'output_non_matching_areas_components.jpg' # Changed output path
+
+    # Create dummy images for demonstration
+    dummy_img1 = np.zeros((300, 400), dtype=np.uint8)
+    dummy_img1[50:100, 50:100] = 255
+    dummy_img1[200:250, 300:350] = 255 # Two separate squares in image 1
+    dummy_img2 = np.zeros((300, 400), dtype=np.uint8)
+    dummy_img2[75:125, 75:125] = 255 # Shifted square in image 2
+
+    cv2.imwrite('template_image.jpg', dummy_img1)
+    cv2.imwrite('actual_image.jpg', dummy_img2)
+
+
+    if detect_non_matching_areas_connected_components(template_image_path, actual_image_path, output_path):
+        print(f"Non-matching areas detection with connected components complete. Output saved to: {output_path}")
+    else:
+        print("Non-matching areas detection failed. See errors above.")
